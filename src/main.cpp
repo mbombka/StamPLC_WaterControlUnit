@@ -46,6 +46,7 @@ void loop()
     delay(800);
     M5StamPLC.Display.fillTriangle(30, 30, 180, 50, 80, 100, YELLOW);
     delay(800);
+    delay(800);
 
     /* Draw random triangles */
     for (int i = 0; i < 1000; i++) {
