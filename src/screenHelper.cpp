@@ -20,8 +20,8 @@ static void showSensorStatus(float temperature1, float temperature2, bool pumpHo
     M5StamPLC.Display.printf(" T. sprzegla:%.2fC\n", temperature2);
     M5StamPLC.Display.printf(" Pompa CWU: %s\n", pumpHotWaterIsOn? "ON":"OFF");
     M5StamPLC.Display.printf(" Pompa cyrk.: %s\n", pumpCirculationIsOn? "ON":"OFF");
-    M5StamPLC.Display.printf(" Pompa parteru: %s\n", pumpFloorHeatingIsOn? "ON":"OFF");
-    delay(5000);
+    M5StamPLC.Display.printf(" Pompa CO: %s\n", pumpFloorHeatingIsOn? "ON":"OFF");
+    delay(100);
 }
 
 static void showHeatingStarted(){
@@ -31,7 +31,7 @@ static void showHeatingStarted(){
     M5StamPLC.Display.setTextSize(2);   
     M5StamPLC.Display.println(" OGRZEWANIE");
     M5StamPLC.Display.println(" ZOSTALO URUCHOMIONE");
-    delay(3000);
+    delay(100);
 }
 
 static void showHeatingStopped(){
@@ -41,5 +41,5 @@ static void showHeatingStopped(){
     M5StamPLC.Display.setTextSize(2);   
     M5StamPLC.Display.println(" OGRZEWANIE");
     M5StamPLC.Display.println(" ZOSTALO ZATRZYMANE");
-    delay(3000);
+    delay(100);
 }

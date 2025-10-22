@@ -43,12 +43,15 @@ enum mode{
 
 screen actualScreen = MAIN_SCREEN;
 mode acualMode = OFF;
+int screenTimeCounter;
+bool screenWasShown;
 void contolLogic(float temperature1, float temperature2, bool& pumpHotWaterIsOn, bool& pumpCirculationIsOn, bool& pumpFloorHeatingIsOn);
 
 void setup()
 {
     /* Init M5StamPLC */
     M5StamPLC.begin();
+    Serial.begin(9600);
 }
 
 void loop()
@@ -57,6 +60,8 @@ void loop()
     bool pumpHotWaterIsOn, pumpCirculationIsOn, pumpFloorHeatingIsOn;
     monitorstring = "Date;Time";  // change to realtime date and time of M5Stack (later)
     
+    
+    M5.update();
     DS18B20.begin();
     int count = DS18B20.getDS18Count();  //check for number of connected sensors
     //read status of relays 
@@ -65,7 +70,7 @@ void loop()
     pumpFloorHeatingIsOn =  M5StamPLC.readPlcRelay(2);
 
     //read temperature
-    if (count > 2) {
+    if (count >= 2) {
         DS18B20.requestTemperatures();
         temperature1 = DS18B20.getTempCByIndex(0);
         temperature2 = DS18B20.getTempCByIndex(1);
@@ -80,11 +85,14 @@ void loop()
     if (M5.BtnA.wasClicked()) {
         acualMode = BATH;
         actualScreen = OK_SCREEN;
+        Serial.println("Button A pressed");
     } else if (M5.BtnB.wasClicked()) {
         acualMode = OFF;
         actualScreen = STOP_SCREEN;
+        Serial.println("Button B pressed");
     } else if (M5.BtnC.wasClicked()) {
-        actualScreen = SENSORS_SCREEN;           
+        actualScreen = SENSORS_SCREEN;  
+        Serial.println("Button C pressed");         
     }
     //actual logic
     contolLogic(temperature1, temperature2, pumpHotWaterIsOn, pumpCirculationIsOn, pumpFloorHeatingIsOn);
@@ -93,16 +101,41 @@ void loop()
     switch (actualScreen)
     {
     case MAIN_SCREEN:
-        showMenu();
+        if (!screenWasShown){
+            showMenu();
+            screenWasShown = true;
+        }
+        
         break;
     case OK_SCREEN:
-        showHeatingStarted();
+        if (!screenWasShown){
+            showHeatingStarted();
+            screenWasShown = true;
+        }        
+        screenTimeCounter ++;
+        if (screenTimeCounter > 5) { 
+            actualScreen = MAIN_SCREEN;
+            screenTimeCounter = 0;
+        };
         break;
     case STOP_SCREEN:
-        showHeatingStopped();
+         if (!screenWasShown){
+            showHeatingStopped();
+            screenWasShown = true;
+        }          
+        screenTimeCounter ++;
+        if (screenTimeCounter > 5) { 
+            actualScreen = MAIN_SCREEN;
+            screenTimeCounter = 0;
+        };
         break;
     case SENSORS_SCREEN:
         showSensorStatus(temperature1, temperature2, pumpHotWaterIsOn, pumpCirculationIsOn, pumpFloorHeatingIsOn);
+        screenTimeCounter ++;
+        if (screenTimeCounter > 10) {
+            actualScreen = MAIN_SCREEN;
+            screenTimeCounter = 0;
+        };
         break;
     default:
         break;
@@ -113,6 +146,13 @@ void loop()
     M5StamPLC.writePlcRelay(1, pumpCirculationIsOn);
     M5StamPLC.writePlcRelay(2, pumpFloorHeatingIsOn);    
     
+    //update status
+    Serial.println("Actual Screen:" + String(actualScreen));  
+    if (screenTimeCounter > 0) {
+         Serial.println("Actual time on screen:" + String(screenTimeCounter));  
+    }
+    Serial.println("Actual mode: " + String(acualMode)); 
+   
     delay(500); //Measuremnt interval
 
 } 
@@ -133,5 +173,5 @@ void contolLogic(float temperature1, float temperature2, bool& pumpHotWaterIsOn,
     }
     
 
-    }
+    
 };
