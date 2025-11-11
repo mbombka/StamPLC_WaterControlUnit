@@ -6,6 +6,8 @@
 #include <typeHelpers/timeHM.h>
 #include <chrono>
 #include <DFRobot_GP8XXX.h>
+#include "include/WiFiManager.h"
+#include "include/WiFiLogger.h"
 
 using namespace std::chrono;
 
@@ -21,9 +23,9 @@ const int PRE_BATH_CIRC_TIME = 3;
 const int BATH_TIME = 60;
 
 const TimeHM CIRCULATION_TIME[] = {
-    TimeHM(5, 30, 15),
-    TimeHM(6, 45, 15),
-    TimeHM(12, 0, 15),
+    TimeHM(6, 30, 15),
+    TimeHM(7, 30, 15),
+    TimeHM(12, 30, 15),
     TimeHM(18, 00, 30)
 }; //time in HH, MM, Duration
 
@@ -78,6 +80,9 @@ void setup()
     M5StamPLC.begin();
     Serial.begin(9600);
 
+    //start wifi
+    MyDevice::setupWiFi();
+    WiFiLogger::begin(23);  // default port 23
     //init time helpers
     helperTime100ms = steady_clock::now();
     helperTime500ms = steady_clock::now();
@@ -90,7 +95,7 @@ void setup()
     Wire.begin(2,1); //SDA, SCL, frequency
 
     if (GP8413.begin() != 0) {
-        Serial.println("Init of DAC2 Fail!");
+        WiFiLogger::println("Init of DAC2 Fail!");
         delay(1000);
     }
 }
@@ -103,7 +108,9 @@ void loop()
     DS18B20.begin();
     int count = DS18B20.getDS18Count();  //check for number of connected sensors
     timeHelper();
-
+    MyDevice::handleWiFi();
+    WiFiLogger::handle();
+   
     //read status of relays 
     pumpHotWaterIsOn =  M5StamPLC.readPlcRelay(0);
     pumpCirculationIsOn =  M5StamPLC.readPlcRelay(1);
@@ -121,24 +128,24 @@ void loop()
     }
 
    // Button handling
-    if (M5.BtnA.isPressed()) {         
+    if (M5.BtnA.isPressed()) {                
         actualScreen = BATH_MODE_STARTED;
-        Serial.println("Button A pressed");
+        WiFiLogger::println("Button A pressed");
         buttonPressedTime = steady_clock::now();
         if(acualMode != BATH){
-          acualMode = BATH;
-          Serial.println("Mode set by button to " + String(acualMode));
+          acualMode = BATH;         
+          WiFiLogger::println("Mode set by button to " + String(acualMode));
           bathStep = 0;
         }       
     } else if (M5.BtnB.isPressed()) {
         acualMode = NORMAL;
         actualScreen = NORMAL_MODE_STARTED;
-        Serial.println("Mode set by button to " + String(acualMode));
-        Serial.println("Button B pressed");
+        WiFiLogger::println("Mode set by button to " + String(acualMode));
+         WiFiLogger::println("Button B pressed");
         buttonPressedTime = steady_clock::now();
     } else if (M5.BtnC.isPressed()) {
         actualScreen = SENSORS_SCREEN;  
-        Serial.println("Button C pressed");     
+         WiFiLogger::println("Button C pressed");     
         buttonPressedTime = steady_clock::now();    
     }
     
@@ -149,17 +156,17 @@ void loop()
     switch (actualScreen)
     {
     case MAIN_SCREEN:
-        showMenu(risingEdge100ms);
+        showMenu(risingEdge1s);
         break;
     case BATH_MODE_STARTED:         
-        showHeatingWithText(risingEdge100ms, heaterSetTemperature, temperature1, bathStepString);  
+        showHeatingWithText(risingEdge1s, heaterSetTemperature, temperature1, bathStepString);  
         if (acualMode == NORMAL) {
             actualScreen = MAIN_SCREEN;
-            Serial.println("Back to main screen"); 
+            WiFiLogger::println("Back to main screen"); 
         };
         break;
     case NORMAL_MODE_STARTED:
-        showNormalModeStarted(risingEdge100ms);
+        showNormalModeStarted(risingEdge1s);
         if (secondsFromButtonPressed > 5) {
             actualScreen = MAIN_SCREEN;
         };
@@ -180,7 +187,7 @@ void loop()
     M5StamPLC.writePlcRelay(2, powerOffFloorHeatingPump);    
        
     if(previousMode != acualMode){
-        Serial.println("Mode changed from " + String(previousMode) + " to " + String(acualMode));
+         WiFiLogger::println("Mode changed from " + String(previousMode) + " to " + String(acualMode));
         previousMode = acualMode;
     }
 } 
@@ -226,9 +233,9 @@ void contolLogic(){
             if (circulation == (actualHour, actualMinute)){
                 memoCirculationDuration = circulation.duration;
                 acualMode = CIRCULATION;
-                Serial.println("Mode set by circulation start to " + String(BATH));
+                WiFiLogger::println("Mode set by circulation start to " + String(BATH));
                 triggerCirculation = true;
-                Serial.println("Circulation started");  
+                WiFiLogger::println("Circulation started");  
                 circulation.print();
             }
         }        
@@ -245,8 +252,8 @@ void contolLogic(){
         if(duration_cast<minutes>(now - circtulationStartTime).count() >= memoCirculationDuration) {
             pumpCirculationIsOn = false;
             acualMode = NORMAL;
-            Serial.println("Mode set by circulation end to " + String(BATH));
-            Serial.println("Circulation ended");
+            WiFiLogger::println("Mode set by circulation end to " + String(BATH));
+            WiFiLogger::println("Circulation ended");
         }
         heaterSetTemperature = NORMAL_HOT_WATER_TEMPERATURE;
         hotWaterTankSetTemperature = NORMAL_HOT_WATER_TEMPERATURE;
@@ -262,7 +269,7 @@ void contolLogic(){
             heaterSetTemperature = NORMAL_HOT_WATER_TEMPERATURE;
             hotWaterTankSetTemperature = NORMAL_HOT_WATER_TEMPERATURE;
             setTemperature(heaterSetTemperature);
-            Serial.println("Bath mode started. BathStep " + String(bathStep));            
+            WiFiLogger::println("Bath mode started. BathStep " + String(bathStep));            
             bathStepString = " Zadano temp cyrk.\n";
             bathStep ++;
             break; 
@@ -271,7 +278,7 @@ void contolLogic(){
                 pumpCirculationIsOn = true;
                 circtulationStartTime = steady_clock::now();
                 bathStepString =bathStepString + " Cyrk. w toku...\n";
-                Serial.println("BathStep " + String(bathStep)); 
+                WiFiLogger::println("BathStep " + String(bathStep)); 
                 bathStep ++;
             }
             break;
@@ -280,7 +287,7 @@ void contolLogic(){
             if(duration_cast<minutes>(now - circtulationStartTime).count() >= PRE_BATH_CIRC_TIME) {
                 pumpCirculationIsOn = false;
                 bathStepString = bathStepString + " Cyrk. zakonczona.\n";
-                Serial.println("BathStep " + String(bathStep)); 
+                WiFiLogger::println("BathStep " + String(bathStep)); 
                 bathStep ++;
             }
             break;
@@ -291,7 +298,7 @@ void contolLogic(){
             setTemperature(heaterSetTemperature);
             bathTempStartTime = steady_clock::now();
             bathStepString = bathStepString + " Zadano T= " + String(heaterSetTemperature) + " C\n";
-            Serial.println("BathStep " + String(bathStep)); 
+            WiFiLogger::println("BathStep " + String(bathStep)); 
             bathStep ++;
             break;
 
@@ -302,7 +309,7 @@ void contolLogic(){
                 setTemperature(heaterSetTemperature);
                 acualMode = NORMAL;
                 bathStepString = bathStepString + " Tryb kąpieli zakończony.\n";
-                Serial.println("Bath mode ended");
+                WiFiLogger::println("Bath mode ended");
             }
             break; 
         default:
@@ -316,10 +323,10 @@ void contolLogic(){
     //control pumpHotWaterIsOn separately from rest of logic
     if(hotWaterHeatingActive && temperature2 > hotWaterTankSetTemperature && !pumpHotWaterIsOn){ 
         pumpHotWaterIsOn = true;
-        Serial.println("Started pumpHotWaterIsOn");  
+        WiFiLogger::println("Started pumpHotWaterIsOn");  
     } else if ((!hotWaterHeatingActive || temperature2 < hotWaterTankSetTemperature - HYSTERESIS) && pumpHotWaterIsOn) {
         pumpHotWaterIsOn = false;
-        Serial.println("Stopped pumpHotWaterIsOn");  
+        WiFiLogger::println("Stopped pumpHotWaterIsOn");  
     }
 
     //logic for cutting power to heating pump:
@@ -374,7 +381,7 @@ void setTemperature(float temp) {
         }
         GP8413.setDACOutVoltage(setting_vol, 0);  
 
-        Serial.println("temperature was set to:  " + String(temp));   
+        WiFiLogger::println("temperature was set to:  " + String(temp));   
     }
     
 }
