@@ -13,7 +13,7 @@ static void showMenu(bool refreshTick){
    
 }
 
-static void showSensorStatus(float heaterSetTemperature, float temperature1, float temperature2, bool pumpHotWaterIsOn, bool pumpCirculationIsOn, bool pumpFloorHeatingIsOn, bool refreshTick, int acualMode, int bathStep){
+static void showStatus1(float heaterSetTemperature, float temperature1, float temperature2, bool pumpHotWaterIsOn, bool pumpCirculationIsOn, bool pumpFloorHeatingIsOn, bool refreshTick){
     if (refreshTick) {
         M5StamPLC.Display.clear(TFT_BLACK);
         M5StamPLC.Display.setCursor(0, 10);
@@ -25,9 +25,22 @@ static void showSensorStatus(float heaterSetTemperature, float temperature1, flo
         M5StamPLC.Display.printf(" Pompa CWU: %s\n", pumpHotWaterIsOn? "ON":"OFF");
         M5StamPLC.Display.printf(" Pompa cyrk.: %s\n", pumpCirculationIsOn? "ON":"OFF");
         M5StamPLC.Display.printf(" Pompa CO: %s\n", pumpFloorHeatingIsOn? "ON":"OFF");
+    }
+}
+
+static void showStatus2( bool refreshTick, int acualMode, int bathStep, bool wifiConnected ){
+    if (refreshTick) {
+        M5StamPLC.Display.clear(TFT_BLACK);
+        M5StamPLC.Display.setCursor(0, 10);
+        M5StamPLC.Display.setTextColor(TFT_WHITE);
+        M5StamPLC.Display.setTextSize(2);   
         M5StamPLC.Display.printf(" Tryb: %d\n", acualMode);
         M5StamPLC.Display.printf(" Bath step: %d\n", bathStep);
-
+         M5StamPLC.Display.printf(" Bath step: %d\n", bathStep);
+        M5StamPLC.Display.printf(" Wifi connected: %s\n", wifiConnected ? "yes" : "no");
+        time_t timestamp;
+        time(&timestamp);
+        M5StamPLC.Display.printf(" %s", ctime(&timestamp));
     }
 }
 

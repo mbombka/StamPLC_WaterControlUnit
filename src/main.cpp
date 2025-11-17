@@ -29,6 +29,10 @@ const TimeHM CIRCULATION_TIME[] = {
     TimeHM(18, 00, 30)
 }; //time in HH, MM, Duration
 
+//for NTP time 
+const long gmtOffset_sec = 3600;        // UTC+1
+const int daylightOffset_sec = 3600;    // DST +1h in summer
+const char* ntpServer = "pool.ntp.org";
 
 DFRobot_GP8XXX_IIC GP8413(RESOLUTION_15_BIT, 0x59, &Wire); //DAC output
 OneWire oneWire(ONE_WIRE_BUS); 
@@ -38,9 +42,11 @@ DallasTemperature DS18B20(&oneWire);
 //enumerator for scren choose
 enum screen{
     MAIN_SCREEN,
-    BATH_MODE_STARTED,
+    BATH_SCREEN,
     NORMAL_MODE_STARTED,
-    SENSORS_SCREEN
+    STATUS_SCREEN_1,
+    STATUS_SCREEN_2,
+    STATUS_SCREEN_3
 };
 //enumerator for mode
 enum mode{
@@ -67,8 +73,9 @@ void contolLogic(); // main method for controling relays
 void setTemperature(float temp); //helper function for setting temperature output
 void timeHelper(); // helper function for time handling
 bool risingEdge100ms, risingEdge500ms, risingEdge1s; //single signal that is high for 1 cycle cyclically
-bool triggerCirculation, hotWaterHeatingActive;
-int memoCirculationDuration;
+bool triggerCirculation, hotWaterHeatingActive, time1TimeSynchronised;
+int memoCirculationDuration, sensorsCount;
+
 
 float heaterSetTemperature, hotWaterTankSetTemperature, lastTemperatureSet;
 time_point<steady_clock> helperTime100ms, helperTime500ms, helperTime1s, buttonPressedTime, circtulationStartTime, bathTempStartTime, lastRelayChangeTime;//helper variables
@@ -98,38 +105,47 @@ void setup()
         WiFiLogger::println("Init of DAC2 Fail!");
         delay(1000);
     }
+    DS18B20.begin();
+    sensorsCount = DS18B20.getDS18Count();  //check for number of connected sensors
 }
 
 void loop()
 { 
-    monitorstring = "Date;Time";  // change to realtime date and time of M5Stack (later)
+    
 
+    //update devices 
     M5.update();
-    DS18B20.begin();
-    int count = DS18B20.getDS18Count();  //check for number of connected sensors
+ 
     timeHelper();
     MyDevice::handleWiFi();
     WiFiLogger::handle();
    
+    //set time from NTP - 1 time
+    if (!time1TimeSynchronised && WiFi.status() == WL_CONNECTED) {
+        configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+        time1TimeSynchronised = true;
+        WiFiLogger::println("Time setup from NTP done");
+    }
+
     //read status of relays 
     pumpHotWaterIsOn =  M5StamPLC.readPlcRelay(0);
     pumpCirculationIsOn =  M5StamPLC.readPlcRelay(1);
     powerOffFloorHeatingPump =  M5StamPLC.readPlcRelay(2);
 
     //read temperature
-    if (count >= 2 && risingEdge1s) {
+    if (sensorsCount >= 2 && risingEdge1s) {
         DS18B20.requestTemperatures();
         temperature1 = DS18B20.getTempCByIndex(0);
         temperature2 = DS18B20.getTempCByIndex(1);
        // monitorstring = "Sensor0: " + String(temperature1,1) + ", Sensor1: " + String(temperature2,1); 
     }
-    else if  (count < 2 && risingEdge1s)   {
-        monitorstring = "Problem, number of found sensors: " + String(count);
+    else if  (sensorsCount < 2 && risingEdge1s)   {
+        monitorstring = "Problem, number of found sensors: " + String(sensorsCount);
     }
 
    // Button handling
-    if (M5.BtnA.isPressed()) {                
-        actualScreen = BATH_MODE_STARTED;
+    if (M5.BtnA.wasSingleClicked()) {                
+        actualScreen = BATH_SCREEN;
         WiFiLogger::println("Button A pressed");
         buttonPressedTime = steady_clock::now();
         if(acualMode != BATH){
@@ -137,15 +153,25 @@ void loop()
           WiFiLogger::println("Mode set by button to " + String(acualMode));
           bathStep = 0;
         }       
-    } else if (M5.BtnB.isPressed()) {
+    } else if (M5.BtnB.wasSingleClicked()) {
         acualMode = NORMAL;
         actualScreen = NORMAL_MODE_STARTED;
         WiFiLogger::println("Mode set by button to " + String(acualMode));
          WiFiLogger::println("Button B pressed");
         buttonPressedTime = steady_clock::now();
-    } else if (M5.BtnC.isPressed()) {
-        actualScreen = SENSORS_SCREEN;  
-         WiFiLogger::println("Button C pressed");     
+    } else if (M5.BtnC.wasSingleClicked()) {
+        if (actualScreen < STATUS_SCREEN_1 )
+        {
+           actualScreen = STATUS_SCREEN_1;
+        } else if (actualScreen < STATUS_SCREEN_2)
+        {
+            actualScreen = STATUS_SCREEN_2;
+        } else if (actualScreen >= STATUS_SCREEN_2)
+        {
+            actualScreen = MAIN_SCREEN;
+        }
+        
+        WiFiLogger::println("Button C pressed");     
         buttonPressedTime = steady_clock::now();    
     }
     
@@ -158,7 +184,7 @@ void loop()
     case MAIN_SCREEN:
         showMenu(risingEdge1s);
         break;
-    case BATH_MODE_STARTED:         
+    case BATH_SCREEN:         
         showHeatingWithText(risingEdge1s, heaterSetTemperature, temperature1, bathStepString);  
         if (acualMode == NORMAL) {
             actualScreen = MAIN_SCREEN;
@@ -171,10 +197,16 @@ void loop()
             actualScreen = MAIN_SCREEN;
         };
         break;
-    case SENSORS_SCREEN:
-        showSensorStatus(heaterSetTemperature, temperature1, temperature2, pumpHotWaterIsOn, pumpCirculationIsOn, powerOffFloorHeatingPump, risingEdge100ms, static_cast<int>(acualMode), bathStep);
+    case STATUS_SCREEN_1:
+        showStatus1(heaterSetTemperature, temperature1, temperature2, pumpHotWaterIsOn, pumpCirculationIsOn, powerOffFloorHeatingPump, risingEdge1s);
         if (secondsFromButtonPressed > 10) {
-            actualScreen =  (acualMode == NORMAL) ? MAIN_SCREEN : BATH_MODE_STARTED;
+            actualScreen =  (acualMode == NORMAL) ? MAIN_SCREEN : BATH_SCREEN;
+        };
+        break;
+    case STATUS_SCREEN_2:
+        showStatus2( risingEdge1s, static_cast<int>(acualMode), bathStep, (WiFi.status() == WL_CONNECTED));
+        if (secondsFromButtonPressed > 10) {
+            actualScreen =  (acualMode == NORMAL) ? MAIN_SCREEN : BATH_SCREEN;
         };
         break;
     default:
