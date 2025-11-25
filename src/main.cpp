@@ -12,7 +12,9 @@
 using namespace std::chrono;
 
 #define ONE_WIRE_BUS 4  //DS18B20 on Grove B corresponds to GPIO26 on ESP32
- 
+TaskHandle_t TaskCore0; //task for core 0 - low latency task
+
+void TaskCore0Loop(void * pvParameters);
 //parameters for the water
 const float NORMAL_HOT_WATER_TEMPERATURE = 25;
 const float FLOOR_HEATING_TEMPERATURE = 35;
@@ -76,17 +78,18 @@ bool risingEdge100ms, risingEdge500ms, risingEdge1s; //single signal that is hig
 bool triggerCirculation, hotWaterHeatingActive, time1TimeSynchronised;
 int memoCirculationDuration, sensorsCount;
 
-
 float heaterSetTemperature, hotWaterTankSetTemperature, lastTemperatureSet;
 time_point<steady_clock> helperTime100ms, helperTime500ms, helperTime1s, buttonPressedTime, circtulationStartTime, bathTempStartTime, lastRelayChangeTime;//helper variables
-
+time_point<steady_clock> debugTimerMemo, debugTimerNow;
 
 void setup()
-{
+{   
+     Serial.begin(9600);
+    
     // Init M5StamPLC
     M5StamPLC.begin();
-    Serial.begin(9600);
-
+   
+    
     //start wifi
     MyDevice::setupWiFi();
     WiFiLogger::begin(23);  // default port 23
@@ -96,26 +99,73 @@ void setup()
     helperTime1s = steady_clock::now();
 
     heaterSetTemperature = NORMAL_HOT_WATER_TEMPERATURE;
-
-    //start IE2C for DAC
+   
+       //start IE2C for DAC
     Wire.end();
     Wire.begin(2,1); //SDA, SCL, frequency
-
     if (GP8413.begin() != 0) {
         WiFiLogger::println("Init of DAC2 Fail!");
         delay(1000);
     }
     DS18B20.begin();
     sensorsCount = DS18B20.getDS18Count();  //check for number of connected sensors
+       //create a task that will be executed in the Task1code() function, with priority 1 and executed on core 0
+    xTaskCreatePinnedToCore(
+                    TaskCore0Loop, /* Function to implement the task */
+                    "Task1",     /* name of task. */
+                    10000,       /* Stack size of task */
+                    NULL,        /* parameter of the task */
+                    0,           /* priority of the task */
+                    &TaskCore0,      /* Task handle to keep track of created task */
+                    0);          /* pin task to core 0 */  
+
 }
 
-void loop()
-{ 
-    
 
-    //update devices 
-    M5.update();
- 
+//Buttons are running on separate task for better user experience
+void TaskCore0Loop(void * pvParameters) {
+    for(;;){
+        //update devices 
+        M5.update();
+        // Button handling
+        if (M5.BtnA.wasSingleClicked()) {                
+            actualScreen = BATH_SCREEN;
+            WiFiLogger::println("Button A pressed");
+            WiFiLogger::println(String(xPortGetCoreID()));
+            buttonPressedTime = steady_clock::now();
+            if(acualMode != BATH){
+                acualMode = BATH;         
+                WiFiLogger::println("Mode set by button to " + String(acualMode));
+                bathStep = 0;
+            }       
+        } else if (M5.BtnB.wasSingleClicked()) {
+            acualMode = NORMAL;
+            actualScreen = NORMAL_MODE_STARTED;
+            WiFiLogger::println("Mode set by button to " + String(acualMode));
+            WiFiLogger::println("Button B pressed");
+            buttonPressedTime = steady_clock::now();
+        } else if (M5.BtnC.wasSingleClicked()) {
+            if (actualScreen < STATUS_SCREEN_1 )
+            {
+                actualScreen = STATUS_SCREEN_1;
+            } else if (actualScreen < STATUS_SCREEN_2)
+            {
+                actualScreen = STATUS_SCREEN_2;
+            } else if (actualScreen >= STATUS_SCREEN_2)
+            {
+                actualScreen = MAIN_SCREEN;
+            }
+            
+            WiFiLogger::println("Button C pressed");     
+            buttonPressedTime = steady_clock::now();    
+        }
+         vTaskDelay(pdMS_TO_TICKS(10)); // give scheduler breathing room
+  } 
+}
+
+
+void loop()
+{           
     timeHelper();
     MyDevice::handleWiFi();
     WiFiLogger::handle();
@@ -142,38 +192,7 @@ void loop()
     else if  (sensorsCount < 2 && risingEdge1s)   {
         monitorstring = "Problem, number of found sensors: " + String(sensorsCount);
     }
-
-   // Button handling
-    if (M5.BtnA.wasSingleClicked()) {                
-        actualScreen = BATH_SCREEN;
-        WiFiLogger::println("Button A pressed");
-        buttonPressedTime = steady_clock::now();
-        if(acualMode != BATH){
-          acualMode = BATH;         
-          WiFiLogger::println("Mode set by button to " + String(acualMode));
-          bathStep = 0;
-        }       
-    } else if (M5.BtnB.wasSingleClicked()) {
-        acualMode = NORMAL;
-        actualScreen = NORMAL_MODE_STARTED;
-        WiFiLogger::println("Mode set by button to " + String(acualMode));
-         WiFiLogger::println("Button B pressed");
-        buttonPressedTime = steady_clock::now();
-    } else if (M5.BtnC.wasSingleClicked()) {
-        if (actualScreen < STATUS_SCREEN_1 )
-        {
-           actualScreen = STATUS_SCREEN_1;
-        } else if (actualScreen < STATUS_SCREEN_2)
-        {
-            actualScreen = STATUS_SCREEN_2;
-        } else if (actualScreen >= STATUS_SCREEN_2)
-        {
-            actualScreen = MAIN_SCREEN;
-        }
-        
-        WiFiLogger::println("Button C pressed");     
-        buttonPressedTime = steady_clock::now();    
-    }
+  
     
     //actual logic
     contolLogic();
@@ -222,6 +241,9 @@ void loop()
          WiFiLogger::println("Mode changed from " + String(previousMode) + " to " + String(acualMode));
         previousMode = acualMode;
     }
+
+    
+    vTaskDelay(pdMS_TO_TICKS(10)); // give scheduler breathing room
 } 
 
 /* END OF LOOP*/
