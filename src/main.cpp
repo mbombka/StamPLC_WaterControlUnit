@@ -41,7 +41,7 @@ OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature DS18B20(&oneWire);
 
 
-//enumerator for scren choose
+//enumerator for screen choose
 enum screen{
     MAIN_SCREEN,
     BATH_SCREEN,
@@ -65,21 +65,23 @@ bool pumpCirculationIsOn; //relay that turn on pump for hot water circulation( i
 bool powerOffFloorHeatingPump; //relay that cut down power on pumps for floor heating. NC contact
 
 screen actualScreen = MAIN_SCREEN; //current displayed screen
-mode acualMode; //mode of operation
+screen previousModeScreen = MAIN_SCREEN; //previous displayed screen in mode change
+mode actualMode; //mode of operation
 mode previousMode; //previous mode of operation
 int bathStep = 0; //step in bath mode
 String monitorstring = "";  //string for serial monitor output
 String bathStepString = "";//string for bath step description
-unsigned long secondsFromButtonPressed; //numbe of secconds that passed from last pressing button
-void contolLogic(); // main method for controling relays
+unsigned long secondsFromButtonPressed; //number of secconds that passed from last pressing button
+void controlLogic(); // main method for controling relays
 void setTemperature(float temp); //helper function for setting temperature output
 void timeHelper(); // helper function for time handling
 bool risingEdge100ms, risingEdge500ms, risingEdge1s; //single signal that is high for 1 cycle cyclically
 bool triggerCirculation, hotWaterHeatingActive, time1TimeSynchronised;
 int memoCirculationDuration, sensorsCount;
+bool screenChanged, Shown = false;
 
 float heaterSetTemperature, hotWaterTankSetTemperature, lastTemperatureSet;
-time_point<steady_clock> helperTime100ms, helperTime500ms, helperTime1s, buttonPressedTime, circtulationStartTime, bathTempStartTime, lastRelayChangeTime;//helper variables
+time_point<steady_clock> helperTime100ms, helperTime500ms, helperTime1s, buttonPressedTime, circulationStartTime, bathTempStartTime, lastRelayChangeTime;//helper variables
 time_point<steady_clock> debugTimerMemo, debugTimerNow;
 
 void setup()
@@ -130,18 +132,19 @@ void TaskCore0Loop(void * pvParameters) {
         // Button handling
         if (M5.BtnA.wasSingleClicked()) {                
             actualScreen = BATH_SCREEN;
+            screenChanged = true;
             WiFiLogger::println("Button A pressed");
-            WiFiLogger::println(String(xPortGetCoreID()));
             buttonPressedTime = steady_clock::now();
-            if(acualMode != BATH){
-                acualMode = BATH;         
-                WiFiLogger::println("Mode set by button to " + String(acualMode));
+            if(actualMode != BATH){
+                actualMode = BATH;         
+                WiFiLogger::println("Mode set by button to " + String(actualMode));
                 bathStep = 0;
             }       
         } else if (M5.BtnB.wasSingleClicked()) {
-            acualMode = NORMAL;
+            actualMode = NORMAL;
             actualScreen = NORMAL_MODE_STARTED;
-            WiFiLogger::println("Mode set by button to " + String(acualMode));
+            screenChanged = true;
+            WiFiLogger::println("Mode set by button to " + String(actualMode));
             WiFiLogger::println("Button B pressed");
             buttonPressedTime = steady_clock::now();
         } else if (M5.BtnC.wasSingleClicked()) {
@@ -195,37 +198,55 @@ void loop()
   
     
     //actual logic
-    contolLogic();
+    controlLogic();
 
     //display screen
     switch (actualScreen)
     {
     case MAIN_SCREEN:
-        showMenu(risingEdge1s);
+        if(screenChanged) {
+            screenChanged = false;
+             showMenu();
+        }
+       
         break;
-    case BATH_SCREEN:         
-        showHeatingWithText(risingEdge1s, heaterSetTemperature, temperature1, bathStepString);  
-        if (acualMode == NORMAL) {
+    case BATH_SCREEN:  
+        if(screenChanged || risingEdge1s) {
+            screenChanged = false;
+             showHeatingWithText(heaterSetTemperature, temperature1, bathStepString);  
+        }       
+        
+        if (actualMode == NORMAL) {
             actualScreen = MAIN_SCREEN;
             WiFiLogger::println("Back to main screen"); 
         };
         break;
     case NORMAL_MODE_STARTED:
-        showNormalModeStarted(risingEdge1s);
+        if(screenChanged || risingEdge1s) {
+            screenChanged = false;
+             showNormalModeStarted();
+        }
+        
         if (secondsFromButtonPressed > 5) {
             actualScreen = MAIN_SCREEN;
         };
         break;
     case STATUS_SCREEN_1:
-        showStatus1(heaterSetTemperature, temperature1, temperature2, pumpHotWaterIsOn, pumpCirculationIsOn, powerOffFloorHeatingPump, risingEdge1s);
+        if(screenChanged || risingEdge1s) {
+            screenChanged = false;
+             showStatus1(heaterSetTemperature, temperature1, temperature2, pumpHotWaterIsOn, pumpCirculationIsOn, powerOffFloorHeatingPump);
+        }        
         if (secondsFromButtonPressed > 10) {
-            actualScreen =  (acualMode == NORMAL) ? MAIN_SCREEN : BATH_SCREEN;
+            actualScreen =  (actualMode == NORMAL) ? MAIN_SCREEN : BATH_SCREEN;
         };
         break;
     case STATUS_SCREEN_2:
-        showStatus2( risingEdge1s, static_cast<int>(acualMode), bathStep, (WiFi.status() == WL_CONNECTED));
+        if(screenChanged || risingEdge1s) {
+            screenChanged = false;
+             showStatus2(static_cast<int>(actualMode), bathStep, (WiFi.status() == WL_CONNECTED));
+        }        
         if (secondsFromButtonPressed > 10) {
-            actualScreen =  (acualMode == NORMAL) ? MAIN_SCREEN : BATH_SCREEN;
+            actualScreen =  (actualMode == NORMAL) ? MAIN_SCREEN : BATH_SCREEN;
         };
         break;
     default:
@@ -237,9 +258,14 @@ void loop()
     M5StamPLC.writePlcRelay(1, pumpCirculationIsOn);
     M5StamPLC.writePlcRelay(2, powerOffFloorHeatingPump);    
        
-    if(previousMode != acualMode){
-         WiFiLogger::println("Mode changed from " + String(previousMode) + " to " + String(acualMode));
-        previousMode = acualMode;
+    if(previousMode != actualMode){
+         WiFiLogger::println("Mode changed from " + String(previousMode) + " to " + String(actualMode));
+        previousMode = actualMode;
+    }
+    if(previousModeScreen != actualScreen){
+        screenChanged = true;
+         WiFiLogger::println("Screen changed from " + String(previousModeScreen) + " to " + String(actualScreen));
+        previousModeScreen = actualScreen;
     }
 
     
@@ -250,7 +276,7 @@ void loop()
 
 
 //control logic for relays and temperature
-void contolLogic(){
+void controlLogic(){
      auto now = steady_clock::now();
 
      //time for hours minute comparison
@@ -267,7 +293,7 @@ void contolLogic(){
     }
 
     //main logic
-    switch (acualMode)
+    switch (actualMode)
     {
     case NORMAL: 
         
@@ -286,7 +312,7 @@ void contolLogic(){
         for(TimeHM circulation : CIRCULATION_TIME){
             if (circulation == (actualHour, actualMinute)){
                 memoCirculationDuration = circulation.duration;
-                acualMode = CIRCULATION;
+                actualMode = CIRCULATION;
                 WiFiLogger::println("Mode set by circulation start to " + String(BATH));
                 triggerCirculation = true;
                 WiFiLogger::println("Circulation started");  
@@ -299,13 +325,13 @@ void contolLogic(){
         //start only if water is heated
         if ((temperature1 > NORMAL_HOT_WATER_TEMPERATURE - HYSTERESIS) && (temperature2 > NORMAL_HOT_WATER_TEMPERATURE- HYSTERESIS) && triggerCirculation) {
             pumpCirculationIsOn = true;
-            circtulationStartTime = steady_clock::now();
+            circulationStartTime = steady_clock::now();
             triggerCirculation = false;
         }
         //end circulation after given time
-        if(duration_cast<minutes>(now - circtulationStartTime).count() >= memoCirculationDuration) {
+        if(duration_cast<minutes>(now - circulationStartTime).count() >= memoCirculationDuration) {
             pumpCirculationIsOn = false;
-            acualMode = NORMAL;
+            actualMode = NORMAL;
             WiFiLogger::println("Mode set by circulation end to " + String(BATH));
             WiFiLogger::println("Circulation ended");
         }
@@ -330,7 +356,7 @@ void contolLogic(){
         case 1: //turn on circulation when temperature is reached
             if((temperature1 > NORMAL_HOT_WATER_TEMPERATURE - HYSTERESIS) && (temperature2 > NORMAL_HOT_WATER_TEMPERATURE- HYSTERESIS)){
                 pumpCirculationIsOn = true;
-                circtulationStartTime = steady_clock::now();
+                circulationStartTime = steady_clock::now();
                 bathStepString =bathStepString + " Cyrk. w toku...\n";
                 WiFiLogger::println("BathStep " + String(bathStep)); 
                 bathStep ++;
@@ -338,7 +364,7 @@ void contolLogic(){
             break;
                       
         case 2: //wait for pre bath circulation done 
-            if(duration_cast<minutes>(now - circtulationStartTime).count() >= PRE_BATH_CIRC_TIME) {
+            if(duration_cast<minutes>(now - circulationStartTime).count() >= PRE_BATH_CIRC_TIME) {
                 pumpCirculationIsOn = false;
                 bathStepString = bathStepString + " Cyrk. zakonczona.\n";
                 WiFiLogger::println("BathStep " + String(bathStep)); 
@@ -361,7 +387,7 @@ void contolLogic(){
                 heaterSetTemperature = NORMAL_HOT_WATER_TEMPERATURE;
                 hotWaterTankSetTemperature = NORMAL_HOT_WATER_TEMPERATURE;
                 setTemperature(heaterSetTemperature);
-                acualMode = NORMAL;
+                actualMode = NORMAL;
                 bathStepString = bathStepString + " Tryb kąpieli zakończony.\n";
                 WiFiLogger::println("Bath mode ended");
             }
