@@ -65,6 +65,7 @@ float temperature2; //temperature of water coming from heater [C]
 bool pumpHotWaterIsOn; // relay that turn on pump for heat water (it heat up water tank). 
 bool pumpCirculationIsOn; //relay that turn on pump for hot water circulation( it circulate water in entire house). NO contact
 bool floorHeatingIsOff; //relay that swith off floor heating. NC contact
+bool hotWaterExternalVoltageIsOn; //relay that turn on external voltage for controling heater
 
 screen actualScreen = MAIN_SCREEN; //current displayed screen
 screen previousModeScreen = MAIN_SCREEN; //previous displayed screen in mode change
@@ -191,6 +192,7 @@ void loop()
     pumpHotWaterIsOn =  M5StamPLC.readPlcRelay(0);
     pumpCirculationIsOn =  M5StamPLC.readPlcRelay(1);
     floorHeatingIsOff = M5StamPLC.readPlcRelay(2);
+    hotWaterExternalVoltageIsOn = M5StamPLC.readPlcRelay(3);
 
     //read temperature
     if (sensorsCount >= 2 && risingEdge1s) {
@@ -265,7 +267,8 @@ void loop()
     //Write relays
     M5StamPLC.writePlcRelay(0, pumpHotWaterIsOn);
     M5StamPLC.writePlcRelay(1, pumpCirculationIsOn); 
-    M5StamPLC.writePlcRelay(2, floorHeatingIsOff);
+    M5StamPLC.writePlcRelay(2, floorHeatingIsOff); 
+    M5StamPLC.writePlcRelay(3, hotWaterExternalVoltageIsOn); 
        
     if(previousMode != actualMode){
          WiFiLogger::println("Mode changed from " + String(previousMode) + " to " + String(actualMode));
@@ -328,9 +331,11 @@ void controlLogic(){
         //set normal temperature temperature
         if (hotWaterHeating) {
             heaterSetTemperature = hotWaterTankSetTemperature;  
+            hotWaterExternalVoltageIsOn = true;
             setTemperature(heaterSetTemperature);
         } else {
             heaterSetTemperature = DEFAULT_TEMPERATURE;
+            hotWaterExternalVoltageIsOn = false;
             setTemperature(heaterSetTemperature);
         }       
         
@@ -366,9 +371,10 @@ void controlLogic(){
         }
         heaterSetTemperature = NORMAL_HOT_WATER_TEMPERATURE;
         hotWaterTankSetTemperature = NORMAL_HOT_WATER_TEMPERATURE;
+        hotWaterExternalVoltageIsOn = true;
         setTemperature(heaterSetTemperature); 
         break;
-
+        /*
     case BATH:
          //start pre bath circulation 
         switch (bathStep)
@@ -421,7 +427,8 @@ void controlLogic(){
         default:
             break;
         }
-        break;
+        break; 
+    */
     default:
         break;
     }    
