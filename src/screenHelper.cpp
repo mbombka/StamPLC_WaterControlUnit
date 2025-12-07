@@ -13,7 +13,7 @@ static void showMenu(){
    
 }
 
-static void showStatus1(float heaterSetTemperature, float temperature1, float temperature2, bool pumpHotWaterIsOn, bool pumpCirculationIsOn, bool floorHeatingIsOff){
+static void showStatus1(float heaterSetTemperature, float temperature1, float temperature2, bool pumpHotWaterIsOn, bool pumpCirculationIsOn, bool floorHeatingIsOff, bool hotWaterExternalVoltageIsOn){
    
     M5StamPLC.Display.clear(TFT_BLACK);
     M5StamPLC.Display.setCursor(0, 10);
@@ -25,6 +25,7 @@ static void showStatus1(float heaterSetTemperature, float temperature1, float te
     M5StamPLC.Display.printf(" Pompa CWU: %s\n", pumpHotWaterIsOn? "ON":"OFF");
     M5StamPLC.Display.printf(" Pompa cyrk.: %s\n", pumpCirculationIsOn? "ON":"OFF");
     M5StamPLC.Display.printf(" Ogrz. Podl.: %s\n", floorHeatingIsOff? "ON":"OFF");
+    M5StamPLC.Display.printf(" Zewn. nap. : %s\n", hotWaterExternalVoltageIsOn? "ON":"OFF");
     
 }
 

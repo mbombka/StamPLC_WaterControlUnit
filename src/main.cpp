@@ -8,8 +8,9 @@
 #include <DFRobot_GP8XXX.h>
 #include "include/WiFiManager.h"
 #include "include/WiFiLogger.h"
-
-
+#include <LittleFS.h>
+#include "include/FileLogger.h"
+#include <WebServer.h>
 using namespace std::chrono;
 
 #define ONE_WIRE_BUS 4  //DS18B20 on Grove B corresponds to GPIO26 on ESP32
@@ -42,6 +43,9 @@ DFRobot_GP8XXX_IIC GP8413(RESOLUTION_15_BIT, 0x59, &Wire); //DAC output
 OneWire oneWire(ONE_WIRE_BUS); 
 DallasTemperature DS18B20(&oneWire);
 
+// Set web server port number to 80
+WebServer  server(80);
+const char* logFilePath = "/log.txt";
 
 //enumerator for screen choose
 enum screen{
@@ -89,6 +93,21 @@ time_point<steady_clock> helperTime100ms, helperTime500ms, helperTime1s, buttonP
 time_point<steady_clock> debugTimerMemo, debugTimerNow;
 
 
+// ----- WEB SERVER HANDLERS -----
+void handleRoot() {
+    server.send(200, "text/html", FileLogger::getLogHTML());
+}
+
+void handleAddLog() {
+    if(server.hasArg("msg")) {
+        String msg = server.arg("msg");
+        FileLogger::addLog(msg);
+        server.send(200, "text/plain", "Log added");
+    } else {
+        server.send(400, "text/plain", "Missing 'msg' argument");
+    }
+}
+
 void setup()
 {   
      Serial.begin(9600);
@@ -97,9 +116,24 @@ void setup()
     M5StamPLC.begin();
    
     
+    // Initialize LittleFS
+    if(!LittleFS.begin(true)) {
+        Serial.println("Failed to mount LittleFS");
+        return;
+    }
+
     //start wifi
     MyDevice::setupWiFi();
     WiFiLogger::begin(23);  // default port 23
+    server.begin();
+
+
+    // Setup web server
+    server.on("/", handleRoot);
+    server.on("/add", handleAddLog);
+    server.begin();
+    Serial.println("HTTP server started");
+
     //init time helpers
     helperTime100ms = steady_clock::now();
     helperTime500ms = steady_clock::now();
@@ -111,8 +145,10 @@ void setup()
     Wire.end();
     bool i2cStartOK = Wire.begin(2,1); //SDA, SCL, frequency
     WiFiLogger::println("I2C init status: " + String(i2cStartOK));
+    FileLogger::addLog("I2C init status: " + String(i2cStartOK));
     if (GP8413.begin() != 0) {
         WiFiLogger::println("Init of DAC2 Fail!");
+         FileLogger::addLog("Init of DAC2 Fail!");
         dacInitFail = true;
         delay(1000);
     }
@@ -141,6 +177,7 @@ void TaskCore0Loop(void * pvParameters) {
             actualScreen = MAIN_SCREEN; //Bath screen
             screenChanged = true;
             WiFiLogger::println("Button A pressed");
+            FileLogger::addLog("Button A pressed");
             buttonPressedTime = steady_clock::now();
            /* if(actualMode != BATH){
                 actualMode = BATH;         
@@ -154,6 +191,7 @@ void TaskCore0Loop(void * pvParameters) {
             screenChanged = true;
             WiFiLogger::println("Mode set by button to " + String(actualMode));
             WiFiLogger::println("Button B pressed");
+            FileLogger::addLog("Button B pressed");
             buttonPressedTime = steady_clock::now();
         } else if (M5.BtnC.wasSingleClicked()) {
             if (actualScreen < STATUS_SCREEN_1 )
@@ -168,6 +206,7 @@ void TaskCore0Loop(void * pvParameters) {
             }
             
             WiFiLogger::println("Button C pressed");     
+            FileLogger::addLog("Button C pressed");
             buttonPressedTime = steady_clock::now();    
         }
          vTaskDelay(pdMS_TO_TICKS(10)); // give scheduler breathing room
@@ -188,6 +227,8 @@ void loop()
         WiFiLogger::println("Time setup from NTP done");
     }
 
+     server.handleClient();
+
     //read status of relays 
     pumpHotWaterIsOn =  M5StamPLC.readPlcRelay(0);
     pumpCirculationIsOn =  M5StamPLC.readPlcRelay(1);
@@ -205,6 +246,7 @@ void loop()
     }
     else if  (sensorsCount < 2 && risingEdge1s)   {
         monitorstring = "Problem, number of found sensors: " + String(sensorsCount);
+        FileLogger::addLog("DS18B20 sensors problem - not found");
     }
   
     
@@ -245,20 +287,14 @@ void loop()
     case STATUS_SCREEN_1:
         if(screenChanged || risingEdge1s) {
             screenChanged = false;
-             showStatus1(heaterSetTemperature, temperature1, temperature2, pumpHotWaterIsOn, pumpCirculationIsOn, floorHeatingIsOff);
-        }        
-        if (secondsFromButtonPressed > 10) {
-            actualScreen =  (actualMode != BATH) ? MAIN_SCREEN : BATH_SCREEN;
-        };
+             showStatus1(heaterSetTemperature, temperature1, temperature2, pumpHotWaterIsOn, pumpCirculationIsOn, floorHeatingIsOff, hotWaterExternalVoltageIsOn);
+        }               
         break;
     case STATUS_SCREEN_2:
         if(screenChanged || risingEdge1s) {
             screenChanged = false;
              showStatus2(modeToString(actualMode), bathStep, dacInitFail, (WiFi.status() == WL_CONNECTED));
-        }        
-        if (secondsFromButtonPressed > 10) {
-            actualScreen =  (actualMode != BATH) ? MAIN_SCREEN : BATH_SCREEN;
-        };
+        }                
         break;
     default:
         break;
@@ -271,12 +307,13 @@ void loop()
     M5StamPLC.writePlcRelay(3, hotWaterExternalVoltageIsOn); 
        
     if(previousMode != actualMode){
-         WiFiLogger::println("Mode changed from " + String(previousMode) + " to " + String(actualMode));
+        WiFiLogger::println("Mode changed from " + String(previousMode) + " to " + String(actualMode));         
         previousMode = actualMode;
     }
     if(previousModeScreen != actualScreen){
         screenChanged = true;
          WiFiLogger::println("Screen changed from " + String(previousModeScreen) + " to " + String(actualScreen));
+         FileLogger::addLog("Screen changed from " + String(previousModeScreen) + " to " + String(actualScreen));
         previousModeScreen = actualScreen;
     }
 
@@ -299,26 +336,36 @@ void controlLogic(){
     int actualMinute = t->tm_min;
 
     //hot water tank logic is independent. temperature1 - tank temperature
-    if (temperature1 < hotWaterTankSetTemperature - HYSTERESIS) {
+    if ((temperature1 < hotWaterTankSetTemperature - HYSTERESIS) && !hotWaterHeating) {
          hotWaterHeating = true;
-    } else if (temperature1 > hotWaterTankSetTemperature + HYSTERESIS){
+         heaterSetTemperature = hotWaterTankSetTemperature;  
+        hotWaterExternalVoltageIsOn = true;
+        setTemperature(heaterSetTemperature);
+        FileLogger::addLog("Hot water logic set heating ON.");
+        FileLogger::addLog("hotWaterExternalVoltageIsOn set to 1");
+        floorHeatingIsOff = true;
+        FileLogger::addLog("floorHeatingIsOff set to 1");
+    } else if ((temperature1 > hotWaterTankSetTemperature + HYSTERESIS) && hotWaterHeating){
         hotWaterHeating = false;
+        heaterSetTemperature = DEFAULT_TEMPERATURE;
+        hotWaterExternalVoltageIsOn = false;
+        setTemperature(heaterSetTemperature);
+        FileLogger::addLog("Hot water logic set heating OFF.");
+        FileLogger::addLog("hotWaterExternalVoltageIsOn set to 0");
+        floorHeatingIsOff = false;
+        FileLogger::addLog("floorHeatingIsOff set to 0");
     }    
+    
 
     //control pumpHotWaterIsOn is independent. temperature 2 - water clutch temperature
     if(hotWaterHeating && temperature2 > hotWaterTankSetTemperature && !pumpHotWaterIsOn){ 
         pumpHotWaterIsOn = true;
         WiFiLogger::println("Started pumpHotWaterIsOn");  
+        FileLogger::addLog("pumpHotWaterIsOn set to 1");
     } else if ((!hotWaterHeating || temperature2 < (hotWaterTankSetTemperature - HYSTERESIS)) && pumpHotWaterIsOn) {
         pumpHotWaterIsOn = false;
-        WiFiLogger::println("Stopped pumpHotWaterIsOn");  
-    }
-
-    //Control floorHeatingOff
-    if (hotWaterHeating) {
-        floorHeatingIsOff = true;
-    } else {
-        floorHeatingIsOff = false;
+        WiFiLogger::println("Stopped pumpHotWaterIsOn"); 
+        FileLogger::addLog("pumpHotWaterIsOn set to 0"); 
     }
 
     //main logic
@@ -327,35 +374,30 @@ void controlLogic(){
     case NORMAL: 
         
          hotWaterTankSetTemperature = NORMAL_HOT_WATER_TEMPERATURE;
-         
-        //set normal temperature temperature
-        if (hotWaterHeating) {
-            heaterSetTemperature = hotWaterTankSetTemperature;  
-            hotWaterExternalVoltageIsOn = true;
-            setTemperature(heaterSetTemperature);
-        } else {
-            heaterSetTemperature = DEFAULT_TEMPERATURE;
-            hotWaterExternalVoltageIsOn = false;
-            setTemperature(heaterSetTemperature);
-        }       
-        
 
        //activate circulation at given time
         for(TimeHM circulation : CIRCULATION_TIME){
-            if (circulation == (actualHour, actualMinute)){
+            if (circulation == (actualHour, actualMinute, 0)){
                 memoCirculationDuration = circulation.duration;
                 actualMode = CIRCULATION;
                 WiFiLogger::println("Mode set by circulation start to " + String(actualMode));
                 triggerCirculation = true;
+                circulation.print();
                 WiFiLogger::println("Circulation started");  
                 WiFiLogger::println("ActualHour:" + String(actualHour));  
-                WiFiLogger::println("actualMinute: " + String(actualMinute));  
-                circulation.print();
+                WiFiLogger::println("actualMinute: " + String(actualMinute)); 
+                FileLogger::addLog("Circulation started by timer"); 
+                FileLogger::addLog("ActualHour:" + String(actualHour) + "actualMinute: " + String(actualMinute));  
+                FileLogger::addLog("CirculationHour:" + String(circulation.hour) + "CirculationMinute: " + String(circulation.minute)+ "CirculationDuration: " + String(circulation.duration)); 
+                
             }
         }        
         break;
 
     case CIRCULATION: 
+
+        hotWaterTankSetTemperature = NORMAL_HOT_WATER_TEMPERATURE;
+
         //start only if water is heated
         if ((temperature1 > NORMAL_HOT_WATER_TEMPERATURE - HYSTERESIS) && (temperature2 > NORMAL_HOT_WATER_TEMPERATURE- HYSTERESIS) && triggerCirculation) {
             pumpCirculationIsOn = true;
@@ -369,10 +411,7 @@ void controlLogic(){
             WiFiLogger::println("Mode set by circulation end to " + String(actualMode));
             WiFiLogger::println("Circulation ended");
         }
-        heaterSetTemperature = NORMAL_HOT_WATER_TEMPERATURE;
-        hotWaterTankSetTemperature = NORMAL_HOT_WATER_TEMPERATURE;
-        hotWaterExternalVoltageIsOn = true;
-        setTemperature(heaterSetTemperature); 
+        
         break;
         /*
     case BATH:
@@ -381,9 +420,7 @@ void controlLogic(){
         {
             //set normal temperature for pre bath circulation
         case 0:
-            heaterSetTemperature = BATH_WATER_TEMPERATURE;
             hotWaterTankSetTemperature = BATH_WATER_TEMPERATURE;
-            setTemperature(heaterSetTemperature);
             WiFiLogger::println("Bath mode started. BathStep " + String(bathStep));            
             bathStepString = " Zadano temp kapieli.\n";
             bathStep ++;
@@ -416,9 +453,7 @@ void controlLogic(){
 
         case 4: //wait for the bath end
              if(duration_cast<minutes>(now - bathTempStartTime).count() >= BATH_TIME) {
-                heaterSetTemperature = NORMAL_HOT_WATER_TEMPERATURE;
                 hotWaterTankSetTemperature = NORMAL_HOT_WATER_TEMPERATURE;
-                setTemperature(heaterSetTemperature);
                 actualMode = NORMAL;
                 bathStepString = bathStepString + " Tryb kąpieli zakończony.\n";
                 WiFiLogger::println("Bath mode ended");
