@@ -23,13 +23,14 @@ const float DEFAULT_TEMPERATURE = 0;
 const float BATH_WATER_TEMPERATURE = 60;
 const float HEATER_TEMP_OFFSET = 10;
 const float MAXIMUM_WATER_TEMP = 60;
-const float HYSTERESIS = 4;
+const float HYSTERESIS_LOW = 4;
+const float HYSTERESIS_HIGH = 1;
 const int PRE_BATH_CIRC_TIME = 3;
 const int BATH_TIME = 60;
 
 const TimeHM CIRCULATION_TIME[] = {
-    TimeHM(6, 30, 15),
-    TimeHM(7, 30, 15),
+    TimeHM(6, 0, 15),
+    TimeHM(7, 30, 5),
     TimeHM(12, 30, 15),
     TimeHM(18, 00, 30)
 }; //time in HH, MM, Duration
@@ -336,7 +337,7 @@ void controlLogic(){
     int actualMinute = t->tm_min;
 
     //hot water tank logic is independent. temperature1 - tank temperature
-    if ((temperature1 < hotWaterTankSetTemperature - HYSTERESIS) && !hotWaterHeating) {
+    if ((temperature1 < hotWaterTankSetTemperature - HYSTERESIS_LOW) && !hotWaterHeating) {
          hotWaterHeating = true;
          heaterSetTemperature = hotWaterTankSetTemperature;  
         hotWaterExternalVoltageIsOn = true;
@@ -345,7 +346,7 @@ void controlLogic(){
         FileLogger::addLog("hotWaterExternalVoltageIsOn set to 1");
         floorHeatingIsOff = true;
         FileLogger::addLog("floorHeatingIsOff set to 1");
-    } else if ((temperature1 > hotWaterTankSetTemperature + HYSTERESIS) && hotWaterHeating){
+    } else if ((temperature1 > hotWaterTankSetTemperature + HYSTERESIS_HIGH) && hotWaterHeating){
         hotWaterHeating = false;
         heaterSetTemperature = DEFAULT_TEMPERATURE;
         hotWaterExternalVoltageIsOn = false;
@@ -362,7 +363,7 @@ void controlLogic(){
         pumpHotWaterIsOn = true;
         WiFiLogger::println("Started pumpHotWaterIsOn");  
         FileLogger::addLog("pumpHotWaterIsOn set to 1");
-    } else if ((!hotWaterHeating || temperature2 < (hotWaterTankSetTemperature - HYSTERESIS)) && pumpHotWaterIsOn) {
+    } else if ((!hotWaterHeating || temperature2 < (hotWaterTankSetTemperature - HYSTERESIS_LOW)) && pumpHotWaterIsOn) {
         pumpHotWaterIsOn = false;
         WiFiLogger::println("Stopped pumpHotWaterIsOn"); 
         FileLogger::addLog("pumpHotWaterIsOn set to 0"); 
@@ -377,7 +378,7 @@ void controlLogic(){
 
        //activate circulation at given time
         for(TimeHM circulation : CIRCULATION_TIME){
-            if (circulation == (actualHour, actualMinute, 0)){
+            if ((circulation == TimeHM(actualHour, actualMinute)) && actualMode != CIRCULATION) {
                 memoCirculationDuration = circulation.duration;
                 actualMode = CIRCULATION;
                 WiFiLogger::println("Mode set by circulation start to " + String(actualMode));
@@ -399,17 +400,21 @@ void controlLogic(){
         hotWaterTankSetTemperature = NORMAL_HOT_WATER_TEMPERATURE;
 
         //start only if water is heated
-        if ((temperature1 > NORMAL_HOT_WATER_TEMPERATURE - HYSTERESIS) && (temperature2 > NORMAL_HOT_WATER_TEMPERATURE- HYSTERESIS) && triggerCirculation) {
+        if ((temperature1 >= NORMAL_HOT_WATER_TEMPERATURE - HYSTERESIS_LOW)  && triggerCirculation) {
             pumpCirculationIsOn = true;
             circulationStartTime = steady_clock::now();
             triggerCirculation = false;
+             FileLogger::addLog("pumpCirculationIsOn set to 1"); 
         }
         //end circulation after given time
         if(duration_cast<minutes>(now - circulationStartTime).count() >= memoCirculationDuration) {
             pumpCirculationIsOn = false;
             actualMode = NORMAL;
+
             WiFiLogger::println("Mode set by circulation end to " + String(actualMode));
             WiFiLogger::println("Circulation ended");
+            FileLogger::addLog("Circulation ended");
+            FileLogger::addLog("pumpCirculationIsOn set to 0"); 
         }
         
         break;

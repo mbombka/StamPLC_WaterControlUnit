@@ -17,7 +17,6 @@ public:
     bool operator==(const TimeHM& other) const {
         return hour == other.hour && minute == other.minute;
     }
-
     void print() const {
         Serial.printf("%02d:%02d duration: %02d", hour, minute, duration);
     }
