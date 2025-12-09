@@ -407,10 +407,9 @@ void controlLogic(){
              FileLogger::addLog("pumpCirculationIsOn set to 1"); 
         }
         //end circulation after given time
-        if(duration_cast<minutes>(now - circulationStartTime).count() >= memoCirculationDuration) {
+        if(pumpCirculationIsOn && (duration_cast<minutes>(now - circulationStartTime).count() >= memoCirculationDuration)) {
             pumpCirculationIsOn = false;
             actualMode = NORMAL;
-
             WiFiLogger::println("Mode set by circulation end to " + String(actualMode));
             WiFiLogger::println("Circulation ended");
             FileLogger::addLog("Circulation ended");
