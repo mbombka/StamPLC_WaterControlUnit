@@ -1,8 +1,13 @@
 #include <M5StamPLC.h>
 
-static void showMenu(){
-   
-    M5StamPLC.Display.clear(TFT_BLACK);
+static void showMenu(bool heaterIsOn, bool circulationIsOn){
+   if (circulationIsOn){
+       M5StamPLC.Display.clear(TFT_GOLD);
+    } else if (heaterIsOn){
+       M5StamPLC.Display.clear(TFT_ORANGE);
+    } else {
+       M5StamPLC.Display.clear(TFT_BLUE);
+    }
     M5StamPLC.Display.setCursor(0, 10);
     M5StamPLC.Display.setTextColor(TFT_WHITE);
     M5StamPLC.Display.setTextSize(3);   
@@ -67,7 +72,7 @@ static void showCirculationStarted(){
 }
 static void showHeatingWithText(float heaterSetTemperature, float temperature1, String text){
    
-    M5StamPLC.Display.clear(TFT_BLACK);
+    M5StamPLC.Display.clear(TFT_RED);
     M5StamPLC.Display.setCursor(0, 10);
     M5StamPLC.Display.setTextColor(TFT_WHITE);
     M5StamPLC.Display.setTextSize(2);   
@@ -79,7 +84,7 @@ static void showHeatingWithText(float heaterSetTemperature, float temperature1, 
 }
 static void showNormalModeStarted(){
    
-    M5StamPLC.Display.clear(TFT_BLACK);
+    M5StamPLC.Display.clear(TFT_BLUE);
     M5StamPLC.Display.setCursor(0, 10);
     M5StamPLC.Display.setTextColor(TFT_WHITE);
     M5StamPLC.Display.setTextSize(2);   
