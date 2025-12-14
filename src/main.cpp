@@ -69,7 +69,7 @@ float temperature1; //temperature of water in tank [C]
 const int averageNumber = 5; //number of samples for averaging
 float temperature1Memos[averageNumber]; //array for temperature1 averaging
 float temperature1Average; //averaged temperature1
-float temperature1_30SecondsAgo; //temperature1 from 30 seconds ago for cooling detection
+float temperature1_60SecondsAgo; //temperature1 from 30 seconds ago for cooling detection
 float temperature2; //temperature of water coming from heater [C]
 bool pumpHotWaterIsOn; // relay that turn on pump for heat water (it heat up water tank). 
 bool pumpCirculationIsOn; //relay that turn on pump for hot water circulation( it circulate water in entire house). NO contact
@@ -89,13 +89,13 @@ void setTemperature(float temp); //helper function for setting temperature outpu
 void timeHelper(); // helper function for time handling
 float calculateAverage(float newTemp); //helper function for calculating average temperature
 String modeToString(mode actualMode);//helper function to write mode to string
-bool risingEdge100ms, risingEdge500ms, risingEdge1s, risingEdge30s; //single signal that is high for 1 cycle cyclically
+bool risingEdge100ms, risingEdge500ms, risingEdge1s, risingEdge60s; //single signal that is high for 1 cycle cyclically
 bool triggerCirculation, hotWaterHeating, time1TimeSynchronised, dacInitFail, fastCoolingDetected;
 int memoCirculationDuration, sensorsCount;
 bool screenChanged, Shown = false;
 bool metalButtonPressed, metalButtonPressedMemo, metalButtonPressedEdge; //metal button state
 float heaterSetTemperature, hotWaterTankSetTemperature, temperatureToSet, lastTemperatureSet;
-time_point<steady_clock> helperTime100ms, helperTime500ms, helperTime1s, helperTimer30s, buttonPressedTime, circulationStartTime, bathTempStartTime, lastRelayChangeTime;//helper variables
+time_point<steady_clock> helperTime100ms, helperTime500ms, helperTime1s, helperTimer60s, buttonPressedTime, circulationStartTime, bathTempStartTime, lastRelayChangeTime;//helper variables
 time_point<steady_clock> debugTimerMemo, debugTimerNow;
 
 
@@ -147,7 +147,9 @@ void setup()
 
     heaterSetTemperature = NORMAL_HOT_WATER_TEMPERATURE;
    
-       //start IE2C for DAC
+    
+    //start IE2C for DAC / removed
+    /*
     Wire.end();
     bool i2cStartOK = Wire.begin(2,1); //SDA, SCL, frequency
     WiFiLogger::println("I2C init status: " + String(i2cStartOK));
@@ -157,7 +159,9 @@ void setup()
          FileLogger::addLog("Init of DAC2 Fail!");
         dacInitFail = true;
         delay(1000);
-    }
+    } */
+
+    //temp sensor DS18B20
     DS18B20.begin();
     sensorsCount = DS18B20.getDS18Count();  //check for number of connected sensors
        //create a task that will be executed in the Task1code() function, with priority 1 and executed on core 0
@@ -185,7 +189,7 @@ void TaskCore0Loop(void * pvParameters) {
         metalButtonPressedMemo = metalButtonPressed;
 
         // Button handling
-        if (M5.BtnA.wasSingleClicked() || (metalButtonPressedEdge && actualMode != BATH)) {                
+        if (M5StamPLC.BtnA.wasSingleClicked() || (metalButtonPressedEdge && actualMode != BATH)) {                
             actualScreen = BATH_SCREEN; 
             screenChanged = true;
             WiFiLogger::println("Button A pressed");
@@ -277,14 +281,15 @@ void loop()
     case MAIN_SCREEN:
         if(screenChanged) {
             screenChanged = false;
-             showMenu(hotWaterHeating, actualMode == CIRCULATION);
+             showHeatingWithText(heaterSetTemperature, temperature1Average, bathStepString);  
+             showMain(modeToString(actualMode), hotWaterHeating, actualMode == CIRCULATION, temperature1Average);
         }
        
         break;
     case BATH_SCREEN:  
         if(screenChanged || risingEdge1s) {
             screenChanged = false;
-             showHeatingWithText(heaterSetTemperature, temperature1, bathStepString);  
+             showHeatingWithText(heaterSetTemperature, temperature1Average, bathStepString);  
         }       
         
         if (actualMode == NORMAL) {
@@ -305,7 +310,7 @@ void loop()
     case STATUS_SCREEN_1:
         if(screenChanged || risingEdge1s) {
             screenChanged = false;
-             showStatus1(heaterSetTemperature, temperature1, temperature2, pumpHotWaterIsOn, pumpCirculationIsOn, floorHeatingIsOff, hotWaterExternalVoltageIsOn);
+             showStatus1(heaterSetTemperature, temperature1Average, temperature2, pumpHotWaterIsOn, pumpCirculationIsOn, floorHeatingIsOff, hotWaterExternalVoltageIsOn);
         }               
         break;
     case STATUS_SCREEN_2:
@@ -355,13 +360,13 @@ void controlLogic(){
     //calculate temperature1 average
     temperature1Average = calculateAverage(temperature1);
     //look at the edge of cooling
-    if (risingEdge30s) {
-        if (temperature1Average < temperature1_30SecondsAgo - 1.0f) {
-            WiFiLogger::println("Temperature1 is cooling down. Temp: " + String(temperature1_30SecondsAgo - temperature1Average,1) + "C");
-            FileLogger::addLog("Temperature1 is cooling down. Temp: " + String(temperature1_30SecondsAgo - temperature1Average ,1) + "C");            
+    if (risingEdge60s && !hotWaterHeating) {
+        if (temperature1Average < temperature1_60SecondsAgo - 0.3f) {
+            WiFiLogger::println("Fast cooling detected. Delta: " + String(temperature1_60SecondsAgo - temperature1Average,1) + "C");
+            FileLogger::addLog("Fast cooling detected. Delta: " + String(temperature1_60SecondsAgo - temperature1Average ,1) + "C");            
             fastCoolingDetected = true;
         }
-        temperature1_30SecondsAgo = temperature1Average;
+        temperature1_60SecondsAgo = temperature1Average;
     }
 
     //hot water tank logic is independent. temperature1 - tank temperature
@@ -370,7 +375,7 @@ void controlLogic(){
          hotWaterHeating = true;
          heaterSetTemperature = hotWaterTankSetTemperature;  
         hotWaterExternalVoltageIsOn = true;
-        setTemperature(heaterSetTemperature);
+        //setTemperature(heaterSetTemperature);
         FileLogger::addLog("Hot water logic set heating ON.");
         FileLogger::addLog("hotWaterExternalVoltageIsOn set to 1");
         floorHeatingIsOff = true;
@@ -379,20 +384,21 @@ void controlLogic(){
         hotWaterHeating = false;
         heaterSetTemperature = DEFAULT_TEMPERATURE;
         hotWaterExternalVoltageIsOn = false;
-        setTemperature(heaterSetTemperature);
+        //setTemperature(heaterSetTemperature);
         FileLogger::addLog("Hot water logic set heating OFF.");
         FileLogger::addLog("hotWaterExternalVoltageIsOn set to 0");
         floorHeatingIsOff = false;
         FileLogger::addLog("floorHeatingIsOff set to 0");
     }    
     
+    
 
     //control pumpHotWaterIsOn is independent. temperature 2 - water clutch temperature
-    if(hotWaterHeating && temperature2 > hotWaterTankSetTemperature && !pumpHotWaterIsOn){ 
+    if(hotWaterHeating && temperature2 >= temperature1Average && !pumpHotWaterIsOn){ 
         pumpHotWaterIsOn = true;
         WiFiLogger::println("Started pumpHotWaterIsOn");  
         FileLogger::addLog("pumpHotWaterIsOn set to 1");
-    } else if ((!hotWaterHeating || temperature2 < (hotWaterTankSetTemperature - HYSTERESIS_LOW)) && pumpHotWaterIsOn) {
+    } else if ((!hotWaterHeating || temperature2 < temperature1Average) && pumpHotWaterIsOn) {
         pumpHotWaterIsOn = false;
         WiFiLogger::println("Stopped pumpHotWaterIsOn"); 
         FileLogger::addLog("pumpHotWaterIsOn set to 0"); 
@@ -404,7 +410,7 @@ void controlLogic(){
     case NORMAL: 
         
          hotWaterTankSetTemperature = NORMAL_HOT_WATER_TEMPERATURE;
-
+         pumpCirculationIsOn = false;
        //activate circulation at given time
         for(TimeHM circulation : CIRCULATION_TIME){
             if ((circulation == TimeHM(actualHour, actualMinute)) && actualMode != CIRCULATION) {
@@ -534,11 +540,11 @@ void timeHelper() {
         risingEdge1s = false;
     }
     //30s
-    if (duration_cast<seconds>(now - helperTimer30s).count() >= 30) {
-        helperTimer30s = steady_clock::now();
-        risingEdge30s = true;
+    if (duration_cast<seconds>(now - helperTimer60s).count() >= 60) {
+        helperTimer60s = steady_clock::now();
+        risingEdge60s = true;
     } else {
-        risingEdge30s = false;
+        risingEdge60s = false;
     }
 
     //time from button press
@@ -577,7 +583,7 @@ String modeToString(mode actualMode){
              return  "Normalny";
              break;
         case   BATH :
-             return  "Kąpiel";
+             return  "Kapiel";
              break;
         case  CIRCULATION :
              return  "Cyrkulacja";
@@ -589,10 +595,10 @@ String modeToString(mode actualMode){
 }
 
 //Calculate average
-float calculateAverage(float values) {
+float calculateAverage(float value) {
     float sum = 0.0;
     for (int i = 0; i < averageNumber; i++) {
-        sum += temperature1Memos[i];
+        sum += value;
     }
     return sum / averageNumber;
 }

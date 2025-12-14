@@ -1,6 +1,6 @@
 #include <M5StamPLC.h>
 
-static void showMenu(bool heaterIsOn, bool circulationIsOn){
+static void showMain(String actualMode, bool heaterIsOn, bool circulationIsOn, float temperature){
    if (circulationIsOn){
        M5StamPLC.Display.clear(TFT_GOLD);
     } else if (heaterIsOn){
@@ -11,8 +11,17 @@ static void showMenu(bool heaterIsOn, bool circulationIsOn){
     M5StamPLC.Display.setCursor(0, 10);
     M5StamPLC.Display.setTextColor(TFT_WHITE);
     M5StamPLC.Display.setTextSize(3);   
-    M5StamPLC.Display.println(" A: Podgrzej\n");
-    M5StamPLC.Display.println(" B: Zatrzymaj\n");
+    M5StamPLC.Display.println(" "+ actualMode);
+    M5StamPLC.Display.printf(" %.1fC\n", temperature);
+    if (heaterIsOn)
+    {
+       M5StamPLC.Display.println(" Grzanie cwu");
+    } 
+    M5StamPLC.Display.setTextSize(1); 
+    M5StamPLC.Display.println("");
+     M5StamPLC.Display.setTextSize(2);  
+    M5StamPLC.Display.println(" A: Kapiel");
+    M5StamPLC.Display.println(" B: Zatrzymaj");
     M5StamPLC.Display.println(" C: Stan ");
     
    
@@ -42,7 +51,7 @@ static void showStatus2(String actualMode, int bathStep, bool dacInitFail, bool 
     M5StamPLC.Display.setTextSize(2);   
     M5StamPLC.Display.printf(" Tryb: %s\n", actualMode);
     M5StamPLC.Display.printf(" Bath step: %d\n", bathStep);
-    M5StamPLC.Display.printf(" DAC init : %s\n", dacInitFail ? "FAILED" : "OK");
+   // M5StamPLC.Display.printf(" DAC init : %s\n", dacInitFail ? "FAILED" : "OK");
     M5StamPLC.Display.printf(" Wifi connected: %s\n", wifiConnected ? "yes" : "no");
     time_t timestamp;
     time(&timestamp);
